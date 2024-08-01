@@ -1,0 +1,258 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+from scipy import stats
+from tensorflow import keras
+
+# Step 1: Load and explore the dataset
+file_path = 'mpi_roof.csv'
+data = pd.read_csv(file_path, encoding='ISO-8859-1')
+
+# Display summary statistics to understand the data distribution
+summary_stats = data.describe()
+print(summary_stats)
+
+# Convert 'Date Time' column to datetime format for time-series analysis
+data['Date Time'] = pd.to_datetime(data['Date Time'], format='%d.%m.%Y %H:%M:%S')
+
+# Calculate and print the correlation matrix to identify relationships between variables
+correlation_matrix = data.corr()
+print(correlation_matrix)
+
+# Check for missing values in the dataset
+missing_values = data.isnull().sum()
+print(missing_values)
+
+# Step 2: Exploratory Data Analysis (EDA)
+# Plot temperature trends over time
+plt.figure(figsize=(12, 6))
+plt.plot(data['Date Time'], data['T (degC)'])
+plt.xlabel('Date Time')
+plt.ylabel('Temperature (degC)')
+plt.title('Temperature Trend Over Time')
+plt.show()
+
+# Extract month and year to perform seasonal analysis
+data['Month'] = data['Date Time'].dt.month
+data['Year'] = data['Date Time'].dt.year
+
+# Calculate and plot the average monthly temperature
+monthly_temp = data.groupby('Month')['T (degC)'].mean()
+plt.figure(figsize=(12, 6))
+monthly_temp.plot(kind='bar')
+plt.xlabel('Month')
+plt.ylabel('Average Temperature (degC)')
+plt.title('Average Monthly Temperature')
+plt.show()
+
+# Additional EDA: Humidity and Wind Speed trends
+plt.figure(figsize=(12, 6))
+plt.plot(data['Date Time'], data['rh (%)'])
+plt.xlabel('Date Time')
+plt.ylabel('Relative Humidity (%)')
+plt.title('Humidity Trend Over Time')
+plt.show()
+
+plt.figure(figsize=(12, 6))
+plt.plot(data['Date Time'], data['wv (m/s)'])
+plt.xlabel('Date Time')
+plt.ylabel('Wind Speed (m/s)')
+plt.title('Wind Speed Trend Over Time')
+plt.show()
+
+# Step 3: Data Preprocessing
+# Prepare data for regression analysis
+X = data[['T (degC)']]  # Independent variable: Temperature
+y = data['Tdew (degC)']  # Dependent variable: Dew Point
+
+# Split data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Create and train a linear regression model
+model = LinearRegression()
+model.fit(X_train, y_train)
+
+# Make predictions using the test set
+y_pred = model.predict(X_test)
+
+# Visualize actual vs. predicted values
+plt.figure(figsize=(12, 6))
+plt.scatter(X_test, y_test, color='blue', label='Actual')
+plt.plot(X_test, y_pred, color='red', linewidth=2, label='Predicted')
+plt.xlabel('Temperature (degC)')
+plt.ylabel('Dew Point (degC)')
+plt.title('Temperature vs. Dew Point - Linear Regression')
+plt.legend()
+plt.show()
+
+# Evaluate the model with Mean Squared Error (MSE) and R-squared (R²) metrics
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+print(f'Mean Squared Error: {mse}')
+print(f'R²: {r2}')
+
+# Calculate Adjusted R-squared for better understanding of model performance
+n = len(y_test)
+p = X_test.shape[1]
+adjusted_r2 = 1 - (1 - r2) * ((n - 1) / (n - p - 1))
+print(f'Adjusted R-squared: {adjusted_r2}')
+
+# Outlier Detection using Z-score
+z_scores = stats.zscore(data['T (degC)'])
+outliers = data[abs(z_scores) > 3]
+print("Detected Outliers:")
+print(outliers)
+
+# Step 4: Time Series Analysis
+# Declaration of titles and feature keys for the dataset
+titles = [
+    "Pressure", "Temperature", "Temperature in Kelvin", "Temperature (dew point)",
+    "Relative Humidity", "Saturation vapor pressure", "Vapor pressure",
+    "Vapor pressure deficit", "Specific humidity", "Water vapor concentration",
+    "Airtight", "Wind speed", "Maximum wind speed", "Wind direction in degrees",
+]
+
+feature_keys = [
+    "p (mbar)", "T (degC)", "Tpot (K)", "Tdew (degC)", "rh (%)",
+    "VPmax (mbar)", "VPact (mbar)", "VPdef (mbar)", "sh (g/kg)",
+    "H2OC (mmol/mol)", "rho (g/m**3)", "wv (m/s)", "max. wv (m/s)", "wd (deg)",
+]
+
+date_time_key = "Date Time"
+
+# Parameters for data processing and model training
+split_fraction = 0.715
+train_split = int(split_fraction * int(data.shape[0]))
+step = 6
+
+past = 720
+future = 72
+learning_rate = 0.001
+batch_size = 256
+epochs = 10
+
+# Function to normalize the dataset based on training data
+def normalize(data, train_split):
+    data_mean = data[:train_split].mean(axis=0)
+    data_std = data[:train_split].std(axis=0)
+    return (data - data_mean) / data_std
+
+# Print selected parameters
+print("The selected parameters are:", ", ".join([titles[i] for i in [0, 1, 5, 7, 8, 10, 11]]))
+
+# Selecting specific features from the dataset
+selected_features = [feature_keys[i] for i in [0, 1, 5, 7, 8, 10, 11]]
+features = data[selected_features]
+features.index = data[date_time_key]
+features.head()
+
+# Normalize the selected features
+features = normalize(features.values, train_split)
+features = pd.DataFrame(features)
+features.head()
+
+# Split the data into training and validation sets
+train_data = features.loc[0:train_split - 1]
+val_data = features.loc[train_split:]
+
+# Prepare the training dataset
+start = past + future
+end = start + train_split
+x_train = train_data[[i for i in range(7)]].values
+y_train = features.iloc[start:end][[1]]
+sequence_length = int(past / step)
+
+# Prepare the validation dataset
+x_end = len(val_data) - past - future
+label_start = train_split + past + future
+x_val = val_data.iloc[:x_end][[i for i in range(7)]].values
+y_val = features.iloc[label_start:][[1]]
+
+# Create time-series datasets for training and validation
+dataset_val = keras.preprocessing.timeseries_dataset_from_array(
+    x_val, y_val, sequence_length=sequence_length, sampling_rate=step, batch_size=batch_size
+)
+dataset_train = keras.preprocessing.timeseries_dataset_from_array(
+    x_train, y_train, sequence_length=sequence_length, sampling_rate=step, batch_size=batch_size
+)
+
+# Display input and target shapes for verification
+for batch in dataset_train.take(1):
+    inputs, targets = batch
+print("Input shape:", inputs.numpy().shape)
+print("Target shape:", targets.numpy().shape)
+
+# Build the LSTM model
+inputs = keras.layers.Input(shape=(inputs.shape[1], inputs.shape[2]))
+lstm_out = keras.layers.LSTM(32)(inputs)
+outputs = keras.layers.Dense(1)(lstm_out)
+model = keras.Model(inputs=inputs, outputs=outputs)
+model.compile(optimizer=keras.optimizers.Adam(learning_rate=learning_rate), loss="mse")
+model.summary()
+
+# Define callbacks for early stopping and model checkpointing
+path_checkpoint = "model_checkpoint.weights.h5"
+es_callback = keras.callbacks.EarlyStopping(monitor="val_loss", min_delta=0, patience=5)
+modelckpt_callback = keras.callbacks.ModelCheckpoint(
+    monitor="val_loss", filepath=path_checkpoint, verbose=1, save_weights_only=True, save_best_only=True
+)
+
+# Train the model and capture the history
+history = model.fit(
+    dataset_train, epochs=epochs, validation_data=dataset_val, callbacks=[es_callback, modelckpt_callback]
+)
+
+# Function to visualize training and validation loss
+def visualize_loss(history, title):
+    loss = history.history["loss"]
+    val_loss = history.history["val_loss"]
+    epochs = range(len(loss))
+    plt.figure()
+    plt.plot(epochs, loss, "b", label="Training loss")
+    plt.plot(epochs, val_loss, "r", label="Validation loss")
+    plt.title(title)
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.show()
+
+visualize_loss(history, "Training and Validation Loss")
+
+# Function to show prediction plots
+def show_plot(plot_data, delta, title):
+    labels = ["History", "True Future", "Model Prediction"]
+    marker = [".-", "rx", "go"]
+    time_steps = list(range(-(plot_data[0].shape[0]), 0))
+    if delta:
+        future = delta
+    else:
+        future = 0
+
+    plt.title(title)
+    for i, val in enumerate(plot_data):
+        if i:
+            plt.plot(future, plot_data[i], marker[i], markersize=10, label=labels[i])
+        else:
+            plt.plot(time_steps, plot_data[i].flatten(), marker[i], label=labels[i])
+    plt.legend()
+    plt.xlim([time_steps[0], (future + 5) * 2])
+    plt.xlabel("Time-Step")
+    plt.show()
+
+# Plot actual vs predicted values for a few samples
+for x, y in dataset_val.take(3):
+    y_pred = model.predict(x)
+    show_plot([x[0][:, 1].numpy(), y[0].numpy(), y_pred[0]], future, "Single Step Prediction")
+
+# Additional Plots: Distribution of features
+features.hist(bins=50, figsize=(20, 15))
+plt.suptitle("Feature Distributions")
+plt.show()
+
+# Scatter plot matrix
+pd.plotting.scatter_matrix(features, figsize=(20, 15))
+plt.suptitle("Scatter Plot Matrix")
+plt.show()
